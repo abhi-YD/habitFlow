@@ -10,6 +10,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+//routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/habits', require('./routes/habits'));
+app.use('/api/tasks', require('./routes/tasks'));
+
+app.use('/api/goals', require('./routes/goals'));
+
 app.get('/', (req, res) => res.send('HabitFlow API Running'));
 
 const PORT = process.env.PORT || 5000;
