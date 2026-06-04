@@ -381,6 +381,8 @@ import { X, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useHabitStore from '../../store/habitStore';
 
+import usePlanStore from '../../store/planStore';
+
 const ICONS = ['⭐','🧘','📚','💧','🏃','💪','🥗','😴','✍️',
                '🎯','🎨','🎵','🧹','💊','🌿','☀️','🧠','❤️'];
 
@@ -430,7 +432,7 @@ export default function HabitForm({ open, onClose, editHabit = null }) {
         : [...f.customDays, i]
     }));
   };
-
+  // updated
   const handleSubmit = async () => {
     if (!form.name.trim()) {
       toast.error('Habit name is required');
@@ -445,8 +447,14 @@ export default function HabitForm({ open, onClose, editHabit = null }) {
     if (result.success) {
       toast.success(editHabit ? 'Habit updated!' : '🎯 Habit created!');
       onClose();
+    } else if (result.code === 'HABIT_LIMIT_REACHED') {
+      // ✅ close form, open upgrade modal
+      onClose();
+      usePlanStore.getState().openUpgradeModal(
+        'You\'ve reached the 5 habit limit on Free plan'
+      );
     } else {
-      toast.error('Something went wrong');
+      toast.error(result.message || 'Something went wrong');
     }
     setLoading(false);
   };

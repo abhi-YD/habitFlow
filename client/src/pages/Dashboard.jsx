@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState, useCallback } from 'react';
+import { motion }    from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import { Link }      from 'react-router-dom';
+import toast         from 'react-hot-toast';
 
 import useHabitStore from '../store/habitStore';
 import useTaskStore  from '../store/taskStore';
@@ -10,59 +10,175 @@ import useGoalStore  from '../store/goalStore';
 
 import ScoreRing     from '../components/dashboard/ScoreRing';
 import StreakCard     from '../components/dashboard/StreakCard';
-import WeeklyHeatmap from '../components/dashboard/WeeklyHeatmap';
+import WeeklyHeatmap from '../components/dashboard/WeeklyHeatMap';
 import HabitItem     from '../components/dashboard/HabitItem';
 import TaskItem      from '../components/dashboard/TaskItem';
 import QuickAdd      from '../components/dashboard/QuickAdd';
 
+// ── helpers ──
+const getToday = () => new Date().toISOString().split('T')[0];
+
+const getNDaysAgo = (n) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+};
+
+// calculate current + longest streak from dailyScores map
+const calculateStreaks = (dailyScores) => {
+  const today   = getToday();
+  const entries = Object.entries(dailyScores)
+    .filter(([, score]) => score > 0)
+    .map(([date]) => date)
+    .sort((a, b) => new Date(b) - new Date(a)); // newest first
+
+  let current = 0;
+  let longest = 0;
+  let temp    = 0;
+  let prev    = null;
+
+  // current streak — consecutive days ending today or yesterday
+  const sortedDesc = [...entries];
+  for (let i = 0; i < sortedDesc.length; i++) {
+    const date     = sortedDesc[i];
+    const expected = getNDaysAgo(i);
+    if (date === expected) {
+      current++;
+    } else {
+      break;
+    }
+  }
+
+  // longest streak — from all history
+  const sortedAsc = [...entries].sort();
+  for (const date of sortedAsc) {
+    if (!prev) {
+      temp = 1;
+    } else {
+      const diff = Math.round(
+        (new Date(date) - new Date(prev)) / (1000 * 60 * 60 * 24)
+      );
+      temp = diff === 1 ? temp + 1 : 1;
+    }
+    longest = Math.max(longest, temp);
+    prev    = date;
+  }
+
+  return { current, longest };
+};
+
 export default function Dashboard() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getToday();
 
-  const { habits, logs, fetchHabits,
-          fetchLogsForDate, logHabit } = useHabitStore();
+  const {
+    habits, logs,
+    fetchHabits, fetchLogsForDate,
+    fetchLogsForRange, logHabit
+  } = useHabitStore();
+
   const { tasks, fetchTasks, completeTask } = useTaskStore();
-  const { goals, fetchGoals } = useGoalStore();
+  const { goals, fetchGoals }               = useGoalStore();
 
-  const [dailyScore,  setDailyScore]  = useState(0);
-  const [todayLogs,   setTodayLogs]   = useState([]);
-  const [isLoading,   setIsLoading]   = useState(true);
+  const [dailyScore,   setDailyScore]   = useState(0);
+  const [todayLogs,    setTodayLogs]    = useState([]);
+  const [dailyScores,  setDailyScores]  = useState({});
+  const [streakData,   setStreakData]   = useState({
+    current: 0, longest: 0
+  });
+  const [isLoading,    setIsLoading]    = useState(true);
 
-  // load all data
-  const loadData = async () => {
+  // ── LOAD ALL DATA ──
+  const loadData = useCallback(async () => {
     setIsLoading(true);
-    await Promise.all([
-      fetchHabits(),
+
+    // 1. fetch habits FIRST so we know total count
+    const habitsList = await fetchHabits();
+    const totalHabits = habitsList?.length || 0;
+
+    // 2. fetch everything else in parallel
+    const [, , rangeData, todayData] = await Promise.all([
       fetchTasks({ date: today }),
       fetchGoals(),
+      // last 60 days for streak + heatmap
+      fetchLogsForRange(getNDaysAgo(60), today),
+      // today's logs separately for accuracy
+      fetchLogsForDate(today),
     ]);
-    const result = await fetchLogsForDate(today);
-    if (result) {
-      setDailyScore(result.score);
-      setTodayLogs(result.logs);
+
+    // 3. calculate today's REAL score
+    if (todayData) {
+      const completedToday = todayData.logs.filter(
+        (l) => l.completed
+      ).length;
+
+      // ✅ FIXED: score = completed / TOTAL HABITS (not total logs)
+      const realScore = totalHabits > 0
+        ? Math.round((completedToday / totalHabits) * 100)
+        : 0;
+
+      setDailyScore(realScore);
+      setTodayLogs(todayData.logs);
     }
+
+    // 4. build dailyScores for heatmap + streaks
+    if (rangeData?.dailyScores) {
+      // override today's score with real calculation
+      const scores = { ...rangeData.dailyScores };
+      if (todayData && totalHabits > 0) {
+        const completedToday = todayData.logs.filter(
+          (l) => l.completed
+        ).length;
+        scores[today] = Math.round(
+          (completedToday / totalHabits) * 100
+        );
+      }
+      setDailyScores(scores);
+
+      // 5. calculate real streaks
+      const streaks = calculateStreaks(scores);
+      setStreakData(streaks);
+    }
+
     setIsLoading(false);
-  };
+  }, [today]);
 
   useEffect(() => { loadData(); }, []);
 
-  // check if habit is completed today
+  // ── CHECK IF HABIT DONE TODAY ──
+  // ✅ FIXED: handle both string and object habitId
   const isHabitCompleted = (habitId) => {
-    return todayLogs.some(
-      (l) => l.habitId?._id === habitId && l.completed
-    );
+    return todayLogs.some((l) => {
+      const logHabitId = l.habitId?._id || l.habitId;
+      return String(logHabitId) === String(habitId) && l.completed;
+    });
   };
 
-  // toggle habit completion
+  // ── TOGGLE HABIT ──
   const handleToggleHabit = async (habitId) => {
     const currentlyDone = isHabitCompleted(habitId);
-    const result = await logHabit(
-      habitId, today, !currentlyDone
-    );
+    const result = await logHabit(habitId, today, !currentlyDone);
+
     if (result.success) {
+      // re-fetch today's logs and recalculate score
       const updated = await fetchLogsForDate(today);
       if (updated) {
-        setDailyScore(updated.score);
+        const completedCount = updated.logs.filter(
+          (l) => l.completed
+        ).length;
+        const realScore = habits.length > 0
+          ? Math.round((completedCount / habits.length) * 100)
+          : 0;
+        setDailyScore(realScore);
         setTodayLogs(updated.logs);
+
+        // update today's score in dailyScores
+        setDailyScores((prev) => ({
+          ...prev, [today]: realScore
+        }));
+
+        // recalculate streaks
+        const newScores = { ...dailyScores, [today]: realScore };
+        setStreakData(calculateStreaks(newScores));
       }
       toast.success(
         currentlyDone ? 'Habit unmarked' : '🎉 Habit completed!'
@@ -70,27 +186,21 @@ export default function Dashboard() {
     }
   };
 
-  // toggle task
+  // ── TOGGLE TASK ──
   const handleToggleTask = async (taskId) => {
     const result = await completeTask(taskId);
-    if (result.success) {
-      toast.success('Task updated!');
-    }
+    if (result.success) toast.success('Task updated!');
   };
 
-  // today's tasks only
   const todayTasks = tasks.filter((t) => t.dueDate === today);
-
-  // calculate streak (simplified — longest current streak)
-  const currentStreak = habits.length > 0 ? 5 : 0; // placeholder
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center
-                      min-h-[60vh]">
+      <div className="flex items-center justify-center min-h-[60vh]">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-violet-600
-                          border-t-transparent rounded-full animate-spin" />
+                          border-t-transparent rounded-full
+                          animate-spin" />
           <p className="text-[#64748B] text-sm">
             Loading your day...
           </p>
@@ -108,7 +218,7 @@ export default function Dashboard() {
         animate={{ opacity: 1, y: 0 }}
         className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
       >
-        {/* daily score */}
+        {/* ✅ REAL daily score */}
         <div className="bg-[#111118] border border-[#1E1E2E]
                         rounded-2xl p-5 flex items-center gap-5">
           <ScoreRing score={dailyScore} size={100} />
@@ -131,8 +241,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* streak */}
-        <StreakCard streak={currentStreak} longest={12} />
+        {/* ✅ REAL streak */}
+        <StreakCard
+          streak={streakData.current}
+          longest={streakData.longest}
+        />
 
         {/* goals summary */}
         <div className="bg-[#111118] border border-[#1E1E2E]
@@ -144,9 +257,7 @@ export default function Dashboard() {
           {goals.length === 0 ? (
             <div className="flex flex-col items-center
                             justify-center h-16 gap-2">
-              <p className="text-[#64748B] text-sm">
-                No goals yet
-              </p>
+              <p className="text-[#64748B] text-sm">No goals yet</p>
               <Link to="/goals"
                 className="text-violet-400 text-xs
                            hover:text-violet-300">
@@ -157,9 +268,12 @@ export default function Dashboard() {
             <div className="space-y-3">
               {goals.slice(0, 2).map((goal) => {
                 const progress = Math.min(
-                  Math.round(
-                    (goal.currentValue / goal.targetValue) * 100
-                  ), 100
+                  goal.targetValue > 0
+                    ? Math.round(
+                        (goal.currentValue / goal.targetValue) * 100
+                      )
+                    : 0,
+                  100
                 );
                 return (
                   <div key={goal._id}>
@@ -206,17 +320,16 @@ export default function Dashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-[#111118] border border-[#1E1E2E] rounded-2xl p-5"
+          className="bg-[#111118] border border-[#1E1E2E]
+                     rounded-2xl p-5"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-white font-semibold">
-              Today's Habits
-            </p>
+            <p className="text-white font-semibold">Today's Habits</p>
             <Link to="/habits"
               className="flex items-center gap-1 text-violet-400
-                         text-xs hover:text-violet-300 transition-colors">
-              Manage
-              <ArrowRight size={12} />
+                         text-xs hover:text-violet-300
+                         transition-colors">
+              Manage <ArrowRight size={12} />
             </Link>
           </div>
 
@@ -225,8 +338,8 @@ export default function Dashboard() {
                             justify-center py-10 gap-3">
               <span className="text-4xl">🎯</span>
               <p className="text-[#64748B] text-sm text-center">
-                No habits yet.
-                <br />Add your first habit to get started!
+                No habits yet.<br />
+                Add your first habit to get started!
               </p>
               <Link to="/habits"
                 className="text-violet-400 text-sm font-medium
@@ -254,17 +367,16 @@ export default function Dashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="bg-[#111118] border border-[#1E1E2E] rounded-2xl p-5"
+          className="bg-[#111118] border border-[#1E1E2E]
+                     rounded-2xl p-5"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-white font-semibold">
-              Today's Tasks
-            </p>
+            <p className="text-white font-semibold">Today's Tasks</p>
             <Link to="/tasks"
               className="flex items-center gap-1 text-violet-400
-                         text-xs hover:text-violet-300 transition-colors">
-              All tasks
-              <ArrowRight size={12} />
+                         text-xs hover:text-violet-300
+                         transition-colors">
+              All tasks <ArrowRight size={12} />
             </Link>
           </div>
 
@@ -273,8 +385,8 @@ export default function Dashboard() {
                             justify-center py-10 gap-3">
               <span className="text-4xl">✅</span>
               <p className="text-[#64748B] text-sm text-center">
-                No tasks for today.
-                <br />Add tasks to stay on track!
+                No tasks for today.<br />
+                Add tasks to stay on track!
               </p>
               <Link to="/tasks"
                 className="text-violet-400 text-sm font-medium
@@ -297,13 +409,13 @@ export default function Dashboard() {
         </motion.div>
       </div>
 
-      {/* ── WEEKLY HEATMAP ── */}
+      {/* ── WEEKLY HEATMAP (✅ now uses real dailyScores) ── */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
       >
-        <WeeklyHeatmap habits={habits} logs={logs} />
+        <WeeklyHeatmap dailyScores={dailyScores} />
       </motion.div>
 
       {/* ── QUICK ADD FAB ── */}

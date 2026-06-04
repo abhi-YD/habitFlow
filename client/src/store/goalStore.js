@@ -24,7 +24,12 @@ const useGoalStore = create((set) => ({
       set((state) => ({ goals: [res.data, ...state.goals] }));
       return { success: true };
     } catch (err) {
-      return { success: false };
+      return {
+        success: false,
+        message: err.response?.data?.message,
+        code:    err.response?.data?.code,
+        upgrade: err.response?.data?.upgrade || false
+      };
     }
   },
 
