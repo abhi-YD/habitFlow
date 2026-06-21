@@ -27,6 +27,7 @@ const cors     = require('cors');
 const dotenv   = require('dotenv');
 const connectDB = require('./config/db');
 const { startCronJobs } = require('./services/cronService');
+const passport = require('./config/passport');
 
 dotenv.config();
 connectDB();
@@ -34,8 +35,11 @@ connectDB();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(passport.initialize());
 
 // routes
+
+
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/habits',        require('./routes/habits'));
 app.use('/api/tasks',         require('./routes/tasks'));
@@ -47,6 +51,8 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin',    require('./routes/admin'));
 
 app.get('/', (req, res) => res.send('HabitFlow API Running'));
+
+
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {

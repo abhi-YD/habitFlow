@@ -105,6 +105,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import useAuthStore from './store/authStore';
 
+import AuthCallback from './pages/AuthCallback';
+
 import Login     from './pages/Login';
 import Register  from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -118,6 +120,8 @@ import Layout    from './components/layout/Layout';
 import Landing   from './pages/Landing';
 import Pricing   from './pages/Pricing';
 import Admin     from './pages/Admin';
+
+
 
 // ── Protected: must be logged in ──
 const ProtectedRoute = ({ children }) => {
@@ -164,6 +168,7 @@ export default function App() {
         {/* ── PUBLIC — always accessible ── */}
         <Route path="/"       element={<Landing />} />
         <Route path="/pricing" element={<Pricing />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
         {/* ── AUTH — redirect to dashboard if logged in ── */}
         <Route path="/login" element={
