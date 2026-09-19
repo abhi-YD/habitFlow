@@ -52,6 +52,19 @@ const useAuthStore = create((set) => ({
     }
   },
 
+  // additional method to handle Google OAuth token login
+  loginWithToken: (token, userData) => {
+    localStorage.setItem('token', token);
+    set({
+      token,
+      isLoggedIn: true,
+      user: {
+        name:  userData.name,
+        email: userData.email,
+      }
+    });
+  },
+
   // FETCH CURRENT USER
   fetchMe: async () => {
     try {

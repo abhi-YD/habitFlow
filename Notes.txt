@@ -1,0 +1,1 @@
+adding changes model name with changing model name in .env

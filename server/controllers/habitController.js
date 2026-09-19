@@ -68,7 +68,7 @@ exports.updateHabit = async (req, res) => {
     const habit = await Habit.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
       { ...req.body },
-      { new: true }  // return updated document
+      { returnDocument: 'after' }  // return updated document
     );
 
     if (!habit) {
@@ -88,7 +88,7 @@ exports.deleteHabit = async (req, res) => {
     const habit = await Habit.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
       { isActive: false },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!habit) {
@@ -172,6 +172,50 @@ exports.getHabitLogs = async (req, res) => {
 
     res.json({ logs, streak });
 
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// GET LOGS FOR DATE RANGE (for streak + heatmap)
+exports.getLogsForRange = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) {
+      return res.status(400).json({
+        message: 'from and to dates required'
+      });
+    }
+
+    const logs = await Log.find({
+      userId: req.userId,
+      date:   { $gte: from, $lte: to }
+    }).populate('habitId', 'name icon color');
+
+    // group logs by date
+    const grouped = {};
+    logs.forEach((log) => {
+      if (!grouped[log.date]) grouped[log.date] = [];
+      grouped[log.date].push(log);
+    });
+
+    // calculate score per day
+    const Habit = require('../models/Habit');
+    const habits = await Habit.find({
+      userId:   req.userId,
+      isActive: true
+    });
+    const totalHabits = habits.length;
+
+    const dailyScores = {};
+    Object.entries(grouped).forEach(([date, dayLogs]) => {
+      const completed = dayLogs.filter((l) => l.completed).length;
+      dailyScores[date] = totalHabits > 0
+        ? Math.round((completed / totalHabits) * 100)
+        : 0;
+    });
+
+    res.json({ logs: grouped, dailyScores, totalHabits });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
