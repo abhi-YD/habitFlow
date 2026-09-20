@@ -411,7 +411,7 @@ export default function Register() {
             type="button"
             onClick={() => {
               window.location.href =
-                'http://localhost:5001/api/auth/google';
+                `${import.meta.env.VITE_API_URL}/auth/google`;
             }}
             className="w-full bg-[#111118] border border-[#1E1E2E]
                       hover:border-[#2E2E4E] text-white font-medium
